@@ -1,0 +1,275 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>Algorithm Visualizer</title>
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<div id="app">
+<header class="header">
+<h1>⚡ Algorithm Visualizer</h1>
+<div class="tabs">
+<button class="tab-btn active" onclick="switchTab('sorting')">Sorting</button>
+<button class="tab-btn" onclick="switchTab('graph')">Graph</button>
+</div>
+</header>
+<div class="main-layout">
+<div class="panel-left">
+<div class="ctrl-section"><span class="ctrl-label">Algorithm</span>
+<select id="algoSelect" onchange="onAlgoChange()"></select></div>
+<div class="ctrl-section" id="sizeCtrl"><span class="ctrl-label">Size</span>
+<div class="slider-row"><input type="range" id="sizeSlider" min="10" max="100" value="40" oninput="onSizeChange()"><span class="slider-val" id="sizeVal">40</span></div></div>
+<div class="ctrl-section"><span class="ctrl-label">Speed</span>
+<div class="slider-row"><input type="range" id="speedSlider" min="1" max="100" value="50" oninput="onSpeedChange()"><span class="slider-val" id="speedVal">50x</span></div></div>
+<div class="btn-group">
+<button class="btn btn-generate" onclick="generate()">🔄 Generate</button>
+<button class="btn btn-start" id="btnStart" onclick="start()">▶ Start</button>
+<button class="btn btn-pause" id="btnPause" onclick="togglePause()" style="display:none">⏸ Pause</button>
+<button class="btn btn-reset" onclick="reset()">⏹ Reset</button>
+</div>
+<div class="ctrl-section" id="graphClickHint" style="display:none"><span class="ctrl-label" style="color:var(--text-dim);font-size:.62rem">Click nodes to set Start (green) and End (red) for Dijkstra</span></div>
+</div>
+<div class="panel-center">
+<div class="viz-area" id="vizArea"></div>
+</div>
+<div class="panel-right">
+<div class="table-title" id="tableTitle">Statistics</div>
+<div id="tableContent"></div>
+</div>
+</div>
+<div class="info-bar">
+<div class="info-item"><span class="info-label">Comparisons</span><span class="info-value" id="statComp">0</span></div>
+<div class="info-item"><span class="info-label">Swaps</span><span class="info-value" id="statSwap">0</span></div>
+<div class="info-item"><span class="info-label">Status</span><span class="badge badge-idle" id="badge">Idle</span></div>
+<div class="complexity-box" id="complexBox"></div>
+<div class="legend" id="legendBox"></div>
+</div>
+</div>
+<script>
+// ═══ STATE ═══
+let tab='sorting',arr=[],steps=[],stepIdx=0,timer=null,running=false,paused=false,speed=50,comps=0,swaps=0;
+let gNodes=[],gEdges=[],gAdj={},gStart=null,gEnd=null;
+const SORT_LIST=[
+{v:'bubble',l:'Bubble Sort',t:'O(n²)',s:'O(1)'},
+{v:'selection',l:'Selection Sort',t:'O(n²)',s:'O(1)'},
+{v:'insertion',l:'Insertion Sort',t:'O(n²)',s:'O(1)'},
+{v:'merge',l:'Merge Sort',t:'O(n log n)',s:'O(n)'},
+{v:'quick',l:'Quick Sort',t:'O(n log n)',s:'O(log n)'},
+{v:'heap',l:'Heap Sort',t:'O(n log n)',s:'O(1)'},
+{v:'shell',l:'Shell Sort',t:'O(n^1.5)',s:'O(1)'},
+{v:'counting',l:'Counting Sort',t:'O(n+k)',s:'O(k)'},
+{v:'radix',l:'Radix Sort',t:'O(d·n)',s:'O(n)'},
+{v:'tim',l:'Tim Sort',t:'O(n log n)',s:'O(n)'}
+];
+const GRAPH_LIST=[
+{v:'bfs',l:'BFS',t:'O(V+E)',s:'O(V)'},
+{v:'dfs',l:'DFS',t:'O(V+E)',s:'O(V)'},
+{v:'dijkstra',l:"Dijkstra's",t:'O((V+E)logV)',s:'O(V)'}
+];
+
+// ═══ TAB ═══
+function switchTab(t){
+if(running)return;tab=t;
+document.querySelectorAll('.tab-btn').forEach((b,i)=>b.classList.toggle('active',(i===0&&t==='sorting')||(i===1&&t==='graph')));
+document.getElementById('sizeCtrl').style.display=t==='sorting'?'':'none';
+document.getElementById('graphClickHint').style.display=t==='graph'?'':'none';
+fillSelect();reset();generate();updateLegend();updateComplexity();
+}
+
+// ═══ CONTROLS ═══
+function fillSelect(){
+const s=document.getElementById('algoSelect'),list=tab==='sorting'?SORT_LIST:GRAPH_LIST;
+s.innerHTML=list.map(a=>`<option value="${a.v}">${a.l}</option>`).join('');
+}
+function onAlgoChange(){if(!running){resetStats();updateComplexity();}}
+function onSizeChange(){document.getElementById('sizeVal').textContent=document.getElementById('sizeSlider').value;if(!running&&tab==='sorting')generate();}
+function onSpeedChange(){speed=+document.getElementById('speedSlider').value;document.getElementById('speedVal').textContent=speed+'x';}
+function getDelay(){return Math.max(1,Math.floor(400/Math.pow(speed,0.75)));}
+
+function updateComplexity(){
+const list=tab==='sorting'?SORT_LIST:GRAPH_LIST,v=document.getElementById('algoSelect').value;
+const a=list.find(x=>x.v===v);
+document.getElementById('complexBox').innerHTML=a?`<div class="complexity-item"><span class="complexity-label">Time:</span><span class="complexity-value">${a.t}</span></div><div class="complexity-item"><span class="complexity-label">Space:</span><span class="complexity-value">${a.s}</span></div>`:'';
+}
+function updateLegend(){
+const b=document.getElementById('legendBox');
+b.innerHTML=tab==='sorting'?
+'<div class="legend-item"><span class="legend-dot" style="background:#6366f1"></span>Default</div><div class="legend-item"><span class="legend-dot" style="background:#eab308"></span>Comparing</div><div class="legend-item"><span class="legend-dot" style="background:#ef4444"></span>Swapping</div><div class="legend-item"><span class="legend-dot" style="background:#22c55e"></span>Sorted</div>':
+'<div class="legend-item"><span class="legend-dot" style="background:#475569"></span>Unvisited</div><div class="legend-item"><span class="legend-dot" style="background:#eab308"></span>Current</div><div class="legend-item"><span class="legend-dot" style="background:#06b6d4"></span>Visited</div><div class="legend-item"><span class="legend-dot" style="background:#22c55e"></span>Path</div>';
+}
+
+// ═══ GENERATE ═══
+function generate(){if(running)return;resetStats();steps=[];stepIdx=0;tab==='sorting'?genArray():genGraph();}
+function genArray(){
+const n=+document.getElementById('sizeSlider').value;arr=[];
+for(let i=0;i<n;i++)arr.push(Math.floor(Math.random()*450)+10);
+renderBars(arr,[],[],[]);renderSortTable();
+}
+function genGraph(){
+gStart='A';gEnd=null;gNodes=[];gEdges=[];gAdj={};
+const ids=['A','B','C','D','E','F'];
+const pos={A:[200,40],B:[80,160],C:[320,160],D:[80,300],E:[320,300],F:[200,380]};
+ids.forEach(id=>{gNodes.push({id,x:pos[id][0],y:pos[id][1]});gAdj[id]=[];});
+[[0,1,4],[0,2,2],[1,3,5],[1,2,1],[2,4,3],[3,5,2],[4,5,6],[2,3,8]].forEach(([a,b,w])=>{
+gEdges.push({from:ids[a],to:ids[b],w});gAdj[ids[a]].push({to:ids[b],w});gAdj[ids[b]].push({to:ids[a],w});
+});
+renderGraph();renderGraphTable([],null,{},{});
+}
+
+// ═══ RENDER BARS ═══
+function renderBars(a,cmp,swp,srt){
+const c=document.getElementById('vizArea'),mx=Math.max(...a,1),h=c.clientHeight-16;
+if(c.children.length!==a.length){c.innerHTML='';for(let i=0;i<a.length;i++){const d=document.createElement('div');d.className='bar';c.appendChild(d);}}
+const cs=new Set(cmp),ss=new Set(swp),sr=new Set(srt);
+for(let i=0;i<a.length;i++){const b=c.children[i];b.style.height=Math.max(2,(a[i]/mx)*h)+'px';
+b.className='bar';if(sr.has(i))b.classList.add('sorted');else if(ss.has(i))b.classList.add('swapping');else if(cs.has(i))b.classList.add('comparing');}
+}
+
+// ═══ RENDER GRAPH ═══
+function renderGraph(visited,current,activeEdges,pathSet,dists){
+visited=visited||[];activeEdges=activeEdges||[];pathSet=pathSet||new Set();dists=dists||{};
+const c=document.getElementById('vizArea'),vs=new Set(visited);
+let h='<svg class="graph-svg" viewBox="0 0 400 420">';
+for(const e of gEdges){
+const f=gNodes.find(n=>n.id===e.from),t=gNodes.find(n=>n.id===e.to);if(!f||!t)continue;
+let cl='graph-edge';
+const isA=activeEdges.some(x=>(x[0]===e.from&&x[1]===e.to)||(x[0]===e.to&&x[1]===e.from));
+const isP=pathSet.has(e.from)&&pathSet.has(e.to);
+if(isP)cl+=' path';else if(isA)cl+=' active';
+h+=`<line class="${cl}" x1="${f.x}" y1="${f.y}" x2="${t.x}" y2="${t.y}"/>`;
+h+=`<text class="edge-wt" x="${(f.x+t.x)/2}" y="${(f.y+t.y)/2-5}">${e.w}</text>`;
+}
+for(const n of gNodes){
+let cl='graph-node';
+if(pathSet.has(n.id))cl+=' path-n';else if(n.id===current)cl+=' current';else if(n.id===gStart)cl+=' start';else if(n.id===gEnd)cl+=' end';else if(vs.has(n.id))cl+=' visited';
+h+=`<circle class="${cl}" cx="${n.x}" cy="${n.y}" r="20" onclick="clickNode('${n.id}')"/>`;
+h+=`<text class="node-lbl" x="${n.x}" y="${n.y}">${n.id}</text>`;
+if(dists[n.id]!==undefined)h+=`<text class="edge-wt" x="${n.x}" y="${n.y+30}" style="fill:var(--cyan)">${dists[n.id]===Infinity?'∞':dists[n.id]}</text>`;
+}
+h+='</svg>';c.innerHTML=h;
+}
+function clickNode(id){
+if(running)return;const algo=document.getElementById('algoSelect').value;
+if(algo==='dijkstra'){if(!gStart||gEnd){gStart=id;gEnd=null;}else if(id!==gStart)gEnd=id;}
+else gStart=id;
+renderGraph();
+}
+
+// ═══ TABLES ═══
+function renderSortTable(){
+document.getElementById('tableTitle').textContent='Statistics';
+document.getElementById('tableContent').innerHTML=`<div class="sort-stats">
+<div class="sort-stat-item"><span class="sort-stat-label">Comparisons</span><span class="sort-stat-value" id="tComp">0</span></div>
+<div class="sort-stat-item"><span class="sort-stat-label">Swaps</span><span class="sort-stat-value" id="tSwap">0</span></div>
+<div class="sort-stat-item"><span class="sort-stat-label">Array Size</span><span class="sort-stat-value">${arr.length}</span></div>
+<div class="sort-stat-item"><span class="sort-stat-label">Algorithm</span><span class="sort-stat-value" style="font-size:.72rem">${document.getElementById('algoSelect').selectedOptions[0]?.text||''}</span></div>
+</div>`;
+}
+function renderGraphTable(visited,current,dists,prev){
+document.getElementById('tableTitle').textContent='Traversal Table';
+let h='<table><tr><th>Vertex</th><th>Known</th><th>Cost</th><th>Path</th></tr>';
+for(const n of gNodes){
+const v=visited.includes(n.id),isCur=n.id===current;
+const d=dists[n.id]!==undefined?(dists[n.id]===Infinity?'∞':dists[n.id]):'-';
+const p=prev[n.id]||'-';
+let cls='';if(isCur)cls='highlight';else if(v)cls='visited-row';
+h+=`<tr class="${cls}"><td>${n.id}</td><td>${v?'Yes':'No'}</td><td>${d}</td><td>${p}</td></tr>`;
+}
+h+='</table>';document.getElementById('tableContent').innerHTML=h;
+}
+
+// ═══ STATUS ═══
+function resetStats(){comps=0;swaps=0;updStats();setStatus('idle');}
+function updStats(){document.getElementById('statComp').textContent=comps;document.getElementById('statSwap').textContent=swaps;
+const tc=document.getElementById('tComp'),ts=document.getElementById('tSwap');if(tc)tc.textContent=comps;if(ts)ts.textContent=swaps;}
+function setStatus(s){const b=document.getElementById('badge');b.className='badge badge-'+s;
+b.textContent={idle:'Idle',running:'Running',paused:'Paused',done:'Completed'}[s]||s;}
+function setControls(en){['btnStart','algoSelect','sizeSlider'].forEach(id=>{const e=document.getElementById(id);if(e)e.disabled=!en;});
+document.getElementById('btnPause').style.display=en?'none':'';document.getElementById('btnStart').style.display=en?'':'none';}
+
+// ═══ START / PAUSE / RESET ═══
+function start(){
+if(running)return;running=true;paused=false;resetStats();setStatus('running');setControls(false);
+const algo=document.getElementById('algoSelect').value;
+if(tab==='sorting'){steps=getSortSteps(algo,[...arr]);renderSortTable();}
+else{steps=getGraphSteps(algo);}
+stepIdx=0;animate();
+}
+function togglePause(){
+if(!running)return;paused=!paused;
+document.getElementById('btnPause').textContent=paused?'▶ Resume':'⏸ Pause';
+document.getElementById('btnPause').className='btn '+(paused?'btn-start':'btn-pause');
+setStatus(paused?'paused':'running');if(!paused)animate();
+}
+function reset(){clearTimeout(timer);timer=null;running=false;paused=false;steps=[];stepIdx=0;
+setControls(true);resetStats();document.getElementById('btnPause').textContent='⏸ Pause';
+document.getElementById('btnPause').className='btn btn-pause';generate();}
+
+function animate(){
+if(!running||paused)return;
+if(stepIdx>=steps.length){running=false;setControls(true);setStatus('done');return;}
+const st=steps[stepIdx];
+if(tab==='sorting'){
+if(st.c&&st.c.length)comps++;if(st.s&&st.s.length)swaps++;updStats();
+renderBars(st.a,st.c,st.s,st.d);
+}else{
+if(st.edges)comps+=st.edges.length;updStats();
+renderGraph(st.visited,st.current,st.edges,st.pathSet||new Set(),st.dists||{});
+renderGraphTable(st.visited,st.current,st.dists||{},st.prev||{});
+}
+stepIdx++;timer=setTimeout(animate,getDelay());
+}
+
+// ═══ SORTING ALGORITHMS ═══
+function getSortSteps(algo,a){
+const S=[];
+const snap=(c,s,d)=>S.push({a:[...a],c:c||[],s:s||[],d:d||[]});
+if(algo==='bubble'){const n=a.length;let sd=[];for(let i=0;i<n-1;i++){let sw=false;for(let j=0;j<n-i-1;j++){snap([j,j+1]);if(a[j]>a[j+1]){[a[j],a[j+1]]=[a[j+1],a[j]];snap([],[j,j+1]);sw=true;}}sd.push(n-i-1);snap([],[],sd.slice());if(!sw)break;}snap([],[],[...Array(n).keys()]);}
+else if(algo==='selection'){const n=a.length;let sd=[];for(let i=0;i<n-1;i++){let m=i;for(let j=i+1;j<n;j++){snap([m,j]);if(a[j]<a[m])m=j;}if(m!==i){[a[i],a[m]]=[a[m],a[i]];snap([],[i,m]);}sd.push(i);snap([],[],sd.slice());}snap([],[],[...Array(n).keys()]);}
+else if(algo==='insertion'){const n=a.length;for(let i=1;i<n;i++){let k=a[i],j=i-1;snap([i,j]);while(j>=0&&a[j]>k){a[j+1]=a[j];snap([],[j,j+1]);j--;}a[j+1]=k;}snap([],[],[...Array(n).keys()]);}
+else if(algo==='merge'){function ms(l,r){if(l>=r)return;const m=(l+r)>>1;ms(l,m);ms(m+1,r);const L=a.slice(l,m+1),R=a.slice(m+1,r+1);let i=0,j=0,k=l;while(i<L.length&&j<R.length){snap([l+i,m+1+j]);if(L[i]<=R[j])a[k]=L[i++];else a[k]=R[j++];snap([],[k]);k++;}while(i<L.length){a[k]=L[i++];snap([],[k]);k++;}while(j<R.length){a[k]=R[j++];snap([],[k]);k++;}}ms(0,a.length-1);snap([],[],[...Array(a.length).keys()]);}
+else if(algo==='quick'){const sd=new Set();function qs(lo,hi){if(lo>=hi){if(lo===hi)sd.add(lo);return;}let p=a[hi],i=lo-1;for(let j=lo;j<hi;j++){snap([j,hi]);if(a[j]<p){i++;[a[i],a[j]]=[a[j],a[i]];snap([],[i,j]);}}[a[i+1],a[hi]]=[a[hi],a[i+1]];snap([],[i+1,hi]);sd.add(i+1);qs(lo,i);qs(i+2,hi);}qs(0,a.length-1);snap([],[],[...Array(a.length).keys()]);}
+else if(algo==='heap'){const n=a.length;function hf(sz,i){let lg=i,l=2*i+1,r=2*i+2;if(l<sz){snap([l,lg]);if(a[l]>a[lg])lg=l;}if(r<sz){snap([r,lg]);if(a[r]>a[lg])lg=r;}if(lg!==i){[a[i],a[lg]]=[a[lg],a[i]];snap([],[i,lg]);hf(sz,lg);}}for(let i=(n>>1)-1;i>=0;i--)hf(n,i);let sd=[];for(let i=n-1;i>0;i--){[a[0],a[i]]=[a[i],a[0]];snap([],[0,i]);sd.push(i);hf(i,0);}sd.push(0);snap([],[],sd);}
+else if(algo==='shell'){const n=a.length;for(let g=n>>1;g>0;g>>=1){for(let i=g;i<n;i++){let t=a[i],j=i;snap([j,j-g]);while(j>=g&&a[j-g]>t){a[j]=a[j-g];snap([],[j,j-g]);j-=g;}a[j]=t;}}snap([],[],[...Array(n).keys()]);}
+else if(algo==='counting'){const n=a.length,mx=Math.max(...a),ct=Array(mx+1).fill(0);for(let i=0;i<n;i++){ct[a[i]]++;snap([i]);}const o=[];for(let v=0;v<=mx;v++)for(let c=0;c<ct[v];c++)o.push(v);for(let i=0;i<n;i++){a[i]=o[i];snap([],[i],[...Array(i+1).keys()].map(x=>x));}snap([],[],[...Array(n).keys()]);}
+else if(algo==='radix'){const n=a.length;let mx=Math.max(...a);for(let ex=1;Math.floor(mx/ex)>0;ex*=10){const o=Array(n),ct=Array(10).fill(0);for(let i=0;i<n;i++){ct[Math.floor(a[i]/ex)%10]++;snap([i]);}for(let i=1;i<10;i++)ct[i]+=ct[i-1];for(let i=n-1;i>=0;i--){const d=Math.floor(a[i]/ex)%10;o[ct[d]-1]=a[i];ct[d]--;}for(let i=0;i<n;i++){a[i]=o[i];snap([],[i]);}}snap([],[],[...Array(n).keys()]);}
+else if(algo==='tim'){const R=32;function ti(l,r){for(let i=l+1;i<=r;i++){let k=a[i],j=i-1;snap([i,j]);while(j>=l&&a[j]>k){a[j+1]=a[j];snap([],[j,j+1]);j--;}a[j+1]=k;}}function tm(l,m,r){const L=a.slice(l,m+1),R2=a.slice(m+1,r+1);let i=0,j=0,k=l;while(i<L.length&&j<R2.length){snap([l+i,m+1+j]);if(L[i]<=R2[j])a[k]=L[i++];else a[k]=R2[j++];snap([],[k]);k++;}while(i<L.length){a[k]=L[i++];k++;}while(j<R2.length){a[k]=R2[j++];k++;}}const n=a.length;for(let s=0;s<n;s+=R)ti(s,Math.min(s+R-1,n-1));for(let sz=R;sz<n;sz*=2)for(let l=0;l<n;l+=2*sz){const m=Math.min(l+sz-1,n-1),r=Math.min(l+2*sz-1,n-1);if(m<r)tm(l,m,r);}snap([],[],[...Array(n).keys()]);}
+if(S.length>4000){const idx=[];for(let i=0;i<S.length;i+=Math.floor(S.length/2500))idx.push(i);if(!idx.includes(S.length-1))idx.push(S.length-1);return idx.map(i=>S[i]);}
+return S;
+}
+
+// ═══ GRAPH ALGORITHMS ═══
+function getGraphSteps(algo){
+const S=[];
+if(algo==='bfs'){
+const vis=new Set(),q=[gStart],prev={};vis.add(gStart);
+S.push({current:gStart,visited:[...vis],edges:[],dists:{},prev:{},pathSet:new Set()});
+while(q.length){const u=q.shift(),edges=[];
+for(const nb of gAdj[u]){edges.push([u,nb.to]);if(!vis.has(nb.to)){vis.add(nb.to);q.push(nb.to);prev[nb.to]=u;}}
+S.push({current:u,visited:[...vis],edges,dists:{},prev:{...prev},pathSet:new Set()});}
+}else if(algo==='dfs'){
+const vis=new Set(),st=[gStart],prev={};
+while(st.length){const u=st.pop();if(vis.has(u))continue;vis.add(u);const edges=[];
+for(const nb of gAdj[u]){edges.push([u,nb.to]);if(!vis.has(nb.to)){st.push(nb.to);prev[nb.to]=u;}}
+S.push({current:u,visited:[...vis],edges,dists:{},prev:{...prev},pathSet:new Set()});}
+}else if(algo==='dijkstra'){
+const dist={},prev={},vis=new Set();
+gNodes.forEach(n=>dist[n.id]=Infinity);dist[gStart]=0;
+const pq=[[0,gStart]];
+while(pq.length){pq.sort((a,b)=>a[0]-b[0]);const[d,u]=pq.shift();
+if(vis.has(u))continue;vis.add(u);const edges=[];
+for(const nb of gAdj[u]){edges.push([u,nb.to]);const nd=d+nb.w;
+if(nd<dist[nb.to]){dist[nb.to]=nd;prev[nb.to]=u;pq.push([nd,nb.to]);}}
+S.push({current:u,visited:[...vis],edges,dists:{...dist},prev:{...prev},pathSet:new Set()});}
+let path=new Set();if(gEnd&&prev[gEnd]!==undefined){let n=gEnd;while(n){path.add(n);n=prev[n]||null;}}
+S.push({current:null,visited:[...vis],edges:[],dists:{...dist},prev:{...prev},pathSet:path});
+}
+return S;
+}
+
+// ═══ INIT ═══
+window.addEventListener('DOMContentLoaded',()=>{fillSelect();onSpeedChange();generate();updateLegend();updateComplexity();});
+</script>
+</body>
+</html>
